@@ -21,7 +21,7 @@ clean_project() {
     rm -rf .venv
 
     echo "🗑️  Removing build files (egg-info, build)..."
-    rm -rf build multilayer_perceptron.egg-info
+    rm -rf build *.egg-info
 
     echo "🗑️  Removing Python cache files (__pycache__, *.pyc)..."
     find . -type d -name "__pycache__" -exec rm -rf {} +
@@ -48,7 +48,6 @@ show_help() {
 
 case "$1" in
     install|"-i"|"")
-        printf "Installing..."
         ;;
     clean|"-c")
         clean_project
@@ -68,8 +67,8 @@ esac
 echo -e "${BLUE}--- Starting MULTILAYER PERCEPTRON Project Setup ---${NC}"
 
 echo "🔎 Checking Python version..."
-if ! python3 -c 'import sys; assert sys.version_info >= (3, 8)' &>/dev/null; then
-    echo -e "${RED}ERROR: Python 3.8 or higher is required.${NC}"
+if ! python3 -c 'import sys; assert sys.version_info >= (3, 10)' &>/dev/null; then
+    echo -e "${RED}ERROR: Python 3.11 or higher is required.${NC}"
     echo "Please install a compatible Python version and try again."
     exit 1
 fi
