@@ -27,20 +27,28 @@ class MainController:
             'toggle_theme': self.handle_theme_toggle,
             'exit_app': self.handle_exit
         })
+        if self.model.current_file:
+            self.handle_file_selection(autoload=True)
 
-    def handle_file_selection(self):
-        file_path = filedialog.askopenfilename(
-            initialdir=Utils.get_root_folder_path() + "/datasets",
-            title="Select Dataset",
-            filetypes=(("EDF files", "*.edf"), ("All files", "*.*"))
-        )
+    def handle_file_selection(self, autoload=False):
+
+        if autoload and self.model.current_file:
+            file_path = self.model.current_file
+        else:
+            file_path = filedialog.askopenfilename(
+                initialdir=Utils.get_root_folder_path() + "/datasets",
+                title="Select Dataset",
+                filetypes=(("EDF files", "*.edf"), ("All files", "*.*"))
+            )
+
         if file_path:
             try:
                 # Load EEG data using MNE
                 self.raw_data = mne.io.read_raw_edf(file_path, preload=True, verbose=False)
                 self.model.load_dataset(file_path)
-                self.view.show_message(
-                    f"Dataset loaded successfully!\nChannels: {len(self.raw_data.ch_names)}\nDuration: {self.raw_data.times[-1]:.1f}s")
+                if not autoload:
+                    self.view.show_message(
+                        f"Dataset loaded successfully!\nChannels: {len(self.raw_data.ch_names)}\nDuration: {self.raw_data.times[-1]:.1f}s")
             except Exception as e:
                 self.view.show_message(f"Error loading dataset: {str(e)}", "error")
                 self.raw_data = None

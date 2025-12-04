@@ -5,7 +5,6 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 def create_eeg_visualization(raw_data, view):
     """Create EEG visualization and embed it in the display frame"""
-
     # Create matplotlib figure
     fig, axes = plt.subplots(2, 1, figsize=(10, 8))
 
