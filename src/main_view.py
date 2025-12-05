@@ -14,78 +14,97 @@ class MainView:
 
         # UI Components
         self.file_label = None
-        self.visualize_button = None
         self.canvas = None
+        self.detail_panel = None
 
-        self._setup_ui()
-
-
-    # Private UI Setup Methods
-    # =================================================
-    def _setup_ui(self):
+        # Initialize UI
         self._setup_window()
         self._setup_menu()
         self._setup_main_layout()
+
 
     def _setup_window(self):
         self.root.title("Total Perspective Vortex")
         self.root.geometry("1280x720")
         self.root.rowconfigure(0, weight=1)
         self.root.columnconfigure(0, weight=1)
-        self.root.columnconfigure(1, weight=2)
+        self.root.columnconfigure(1, weight=3)
         # Bind window close event to exit handler
         self.root.protocol("WM_DELETE_WINDOW", lambda: self._trigger_event('exit_app'))
+
 
     def _setup_menu(self):
         menubar = tk.Menu(self.root)
 
         file_menu = tk.Menu(menubar, tearoff=0)
-        file_menu.add_command(label="Load dataset",
-                              command=lambda: self._trigger_event('select_file'))
-        file_menu.add_command(label="Exit",
-                              command=lambda: self._trigger_event('exit_app'))
+        file_menu.add_command(label="Load dataset", command=lambda: self._trigger_event('select_file'))
+        file_menu.add_separator()
+        file_menu.add_command(label="Restart", command=lambda: self._trigger_event('restart_app'))
+        file_menu.add_command(label="Exit", command=lambda: self._trigger_event('exit_app'))
         menubar.add_cascade(label="File", menu=file_menu)
 
-        view_menu = tk.Menu(menubar, tearoff=0)
-        view_menu.add_command(label="Toggle Theme",
-                              command=lambda: self._trigger_event('toggle_theme'))
-        menubar.add_cascade(label="View", menu=view_menu)
+        settings_menu = tk.Menu(menubar, tearoff=0)
+        settings_menu.add_command(label="Toggle Theme", command=lambda: self._trigger_event('toggle_theme'))
+        menubar.add_cascade(label="Settings", menu=settings_menu)
 
         self.root.config(menu=menubar)
 
+
     def _setup_main_layout(self):
         # Configuration frame
-        config_frame = ttk.Frame(self.root, padding=20, borderwidth=2, relief="ridge")
-        config_frame.grid(row=0, column=0, sticky="nsew")
+        side_panel = ttk.Frame(self.root)
+        side_panel.grid(row=0, column=0, sticky="nsew", padx=5)
+        side_panel.rowconfigure(0, weight=1)
+        side_panel.rowconfigure(1, weight=1)
+        side_panel.columnconfigure(0, weight=1)
 
-        ttk.Label(config_frame, text="Configuration").pack(anchor="w")
+        # Configuration Frame
+        upper_frame = ttk.Frame(side_panel, padding=10, borderwidth=2, relief="ridge")
+        upper_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 5))
 
-        self.file_label = ttk.Label(config_frame, text="No file selected", anchor="w")
-        self.file_label.pack(anchor="w", pady=5)
+        ttk.Label(upper_frame, text="Configuration").pack(anchor="w")
 
-        # Load file button
-        load_button = ttk.Button(
-            config_frame,
+        # Load dataset button
+        file_frame = ttk.Frame(upper_frame)
+        file_frame.pack(anchor="w", pady=10)
+        ttk.Button(
+            file_frame,
             text="Load Dataset",
             command=lambda: self._trigger_event('select_file')
-        )
-        load_button.pack(anchor="w", pady=10)
+        ).pack(side='left')
+        self.file_label = ttk.Label(file_frame, text="No file selected", anchor="w")
+        self.file_label.pack(side='left', padx=8)
 
         # Visualize button
-        self.visualize_button = ttk.Button(
-            config_frame,
-            text="Visualize Dataset",
+        visu_frame = ttk.Frame(upper_frame)
+        visu_frame.pack(anchor="w", pady=10)
+        ttk.Button(
+            visu_frame,
+            text="Visualize",
             command=lambda: self._trigger_event('visualize_dataset')
-        )
-        self.visualize_button.pack(anchor="w", pady=10)
+        ).pack(side='left')
 
         # Clear button
-        clear_button = ttk.Button(
-            config_frame,
-            text="Clear Display",
+        ttk.Button(
+            visu_frame,
+            text="X",
             command=self.clear_display_frame
-        )
-        clear_button.pack(anchor="w", pady=10)
+        ).pack(side='left', padx=8)
+
+        # control buttons
+        # Backward, forward, play, pause can be added here in future
+        control_frame = ttk.Frame(upper_frame)
+        control_frame.pack(anchor="w", pady=10)
+        # Placeholder for future control buttons
+        ttk.Button(control_frame, text="<<", command=lambda: self._trigger_event('load_next_egg_data')).pack(side='left')
+        ttk.Button(control_frame, text="").pack(side='left', padx=5)
+        ttk.Button(control_frame, text=">>", command=lambda: self._trigger_event('load_prev_egg_data')).pack(side='left')
+
+        # Details frames
+        self.detail_panel = ttk.Frame(side_panel, padding=10, borderwidth=2, relief="ridge")
+        self.detail_panel.grid(row=1, column=0, sticky="nsew")
+
+        ttk.Label(self.detail_panel, text="Details", anchor="w").pack(padx=5)
 
         # Visual Display Frame
         self.display_frame = ttk.Frame(self.root, padding=20, borderwidth=2, relief="ridge")
@@ -95,6 +114,7 @@ class MainView:
 
         self.default_label = ttk.Label(self.display_frame, text="Visual Display Area")
         self.default_label.pack(anchor="center", expand=True)
+
 
     def _trigger_event(self, event_name):
         """Trigger an event handler if it exists"""
@@ -119,8 +139,8 @@ class MainView:
 
     def add_info_label(self, text):
         """Add information label to display frame"""
-        info_label = ttk.Label(self.display_frame, text=text, font=('Arial', 9))
-        info_label.pack(side='bottom', anchor='w', padx=5, pady=5)
+        info_label = ttk.Label(self.detail_panel, text=text)
+        info_label.pack(side='top', padx=5, pady=5, anchor='w')
 
     def bind_events(self, handlers):
         """Bind event handlers from controller"""
