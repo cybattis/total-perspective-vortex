@@ -11,14 +11,18 @@ class Channel:
 
 
 class Egg:
-    def __init__(self, file_path):
+    def __init__(self, file_path, settings):
         self.raw_data = mne.io.read_raw_edf(file_path, preload=True)
+        self.raw_data = mne.add_reference_channels(self.raw_data, ref_channels=["EEG 999"])
         self.preprocess_data = self.raw_data.copy()
         self.channels: list[Channel] = self._get_channels_from_raw()
         self.sampling_rate = self.raw_data.info['sfreq']
-        self.detail = self._get_details()
         self.current_start = 0
         self.window_duration = 10  # seconds
+        self.notch_filter = settings.get("notch_filter", None)
+        self.low_freq = 5
+        self.cutoff_freq = settings.get("cutoff_value", 100)
+
 
     def visualize(self):
         """
@@ -35,12 +39,21 @@ class Egg:
         plt.tight_layout()
         return fig
 
+    def plot_sensor(self):
+        """
+        Visualize EEG data.
+        """
+        # Create the plot
+        fig = self.preprocess_data.plot_sensors(ch_type="eeg")
+        plt.tight_layout()
+        return fig
+
     def visualize_psd(self):
         """
         Visualize the Power Spectral Density of the EEG data.
         """
         # Plot Power Spectral Density
-        fig = self.preprocess_data.compute_psd(fmax=50).plot(average=True, show=False)
+        fig = self.preprocess_data.compute_psd(fmax=50).plot(average=True, picks="data", exclude="bads", amplitude=False)
         plt.tight_layout()
         return fig
 
@@ -48,15 +61,15 @@ class Egg:
         """
         Preprocesses the raw EEG data by applying filters.
         """
-        l_freq = 1.0
-        h_freq = 20.0
-        notch_freq = 60.0
+        print("Preprocessing EEG data...")
+        print(f"Applying band-pass filter: {self.low_freq} - {self.cutoff_freq} Hz")
+        print(f"Applying notch filter at: {self.notch_filter} Hz")
 
         # Apply band-pass filter
-        self.preprocess_data.filter(l_freq=l_freq, h_freq=h_freq, fir_design='firwin')
+        self.preprocess_data.filter(l_freq=self.low_freq, h_freq=self.cutoff_freq, fir_design='firwin')
 
         # Apply notch filter
-        self.preprocess_data.notch_filter(freqs=notch_freq, fir_design='firwin')
+        self.preprocess_data.notch_filter(freqs=self.notch_filter, fir_design='firwin')
 
     def _get_channels_from_raw(self):
         channels = []
@@ -66,7 +79,7 @@ class Egg:
             channels.append(channel)
         return channels
 
-    def _get_details(self):
+    def get_details(self):
         details = (
             f"Number of Channels: {len(self.channels)}\n"
             f"Sampling Rate: {self.sampling_rate} Hz\n"

@@ -1,4 +1,6 @@
 {
     "last_dataset": "/home/cybattis/dev/total-perspective-vortex/datasets/S001/S001R04.edf",
-    "theme": "dark"
+    "theme": "dark",
+    "cutoff_value": 63.58723404255319,
+    "notch_filter": "60"
 }

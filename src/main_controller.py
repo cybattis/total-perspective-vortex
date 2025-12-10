@@ -30,6 +30,8 @@ class MainController:
             'load_dataset': self.handle_load_dataset,
             'visualize_dataset': self.handle_visualization,
             'reset_dataset': self.handle_reset_dataset,
+            'set_notch_value': self.handle_notch_value,
+            'set_cutoff_value': self.handle_cutoff_value,
             'apply_preprocessing': self.handle_preprocessing,
         })
         if self.model.current_file:
@@ -42,7 +44,7 @@ class MainController:
         if file_path:
             try:
                 # Load EEG data using MNE
-                self.egg = Egg(file_path)
+                self.egg = Egg(file_path, self.model.settings)
                 self.model.set_dataset(file_path)
 
                 if not autoload:
@@ -79,11 +81,27 @@ class MainController:
                 fig_psd = self.egg.visualize_psd()
                 self.view.embed_psd_figure(fig_psd)
 
-                self.view.add_info_label(self.egg.detail)
+                self.view.add_info_label(self.egg.get_details())
             except Exception as e:
                 self.view.show_message(f"Error visualizing dataset: {str(e)}", "error")
         else:
             self.view.show_message("Please load a dataset first")
+
+    def handle_notch_value(self, notch_value):
+        print(f"Setting notch value to: {notch_value}")
+
+        if notch_value == "50":
+            self.egg.notch_filter = 50
+        elif notch_value == "60":
+            self.egg.notch_filter = 60
+        else:  # "None"
+            self.egg.notch_filter = None
+
+        self.model.settings.set('notch_filter', notch_value)
+
+    def handle_cutoff_value(self, cutoff_value):
+        self.egg.cutoff_freq = cutoff_value
+        self.model.settings.set('cutoff_value', cutoff_value)
 
     def handle_preprocessing(self):
         if self.egg is not None:

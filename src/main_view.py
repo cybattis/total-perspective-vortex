@@ -3,6 +3,7 @@ from tkinter import ttk, messagebox, filedialog
 import tkinter as tk
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from mne.filter import notch_filter
 
 from utils import Utils
 
@@ -17,7 +18,7 @@ class MainView:
         # UI Components
         self.file_label = None
         self.canvas = None
-        self.psd_canvas = None
+        self.spectrum_canvas = None
         self.detail_panel = None
 
         # Initialize UI
@@ -98,7 +99,7 @@ class MainView:
         cutoff_frame = ttk.Frame(preprocess_frame)
         cutoff_frame.pack(side='top', fill='x', pady=2)
         ttk.Label(cutoff_frame, text="Low pass filter (Hz):").pack(side='top', anchor='w')
-        cutoff_var = tk.DoubleVar(value=1.0)
+        cutoff_var = tk.DoubleVar(value=50) # Default cutoff frequency
         cutoff_scale = ttk.Scale(
             cutoff_frame,
             from_=0.5,
@@ -108,19 +109,29 @@ class MainView:
             command=lambda v: cutoff_value_label.config(text=f"{float(v):.1f} Hz")
         )
         cutoff_scale.pack(side='left', fill='x', expand=True, padx=5)
+        cutoff_scale.bind('<ButtonRelease-1>', lambda e: self._trigger_event('set_cutoff_value', cutoff_var.get()))
+
         cutoff_value_label = ttk.Label(cutoff_frame, text=f"{cutoff_var.get():.1f} Hz")
         cutoff_value_label.pack(side='top')
 
-        ttk.Button(
-            preprocess_frame,
-            text="Notch Filter (50 Hz)",
-            command=lambda: self._trigger_event('preprocess_dataset', 'notch')
-        ).pack(side='top', fill='x', pady=2)
-        ttk.Button(
-            preprocess_frame,
-            text="Resample (100 Hz)",
-            command=lambda: self._trigger_event('preprocess_dataset', 'resample')
-        ).pack(side='top', fill='x', pady=2)
+        notch_frame = ttk.Frame(preprocess_frame)
+        notch_frame.pack(side='top', fill='x', pady=2)
+        ttk.Label(notch_frame, text="Notch Filter:").pack(side='left', padx=5)
+        notch_filter_var = tk.StringVar(value="None")
+        notch_filter_combobox = ttk.Combobox(
+            notch_frame,
+            textvariable=notch_filter_var,
+            values=["None", "50", "60"],
+            state="readonly"
+        )
+        notch_filter_combobox.pack(side='left', fill='x', expand=True, padx=5)
+        notch_filter_combobox.bind('<<ComboboxSelected>>',lambda e: self._trigger_event('set_notch_value', notch_filter_var.get()))
+
+        # ttk.Button(
+        #     preprocess_frame,
+        #     text="Resample (100 Hz)",
+        #     command=lambda: self._trigger_event('preprocess_dataset', 'resample')
+        # ).pack(side='top', fill='x', pady=2)
         # ttk.Button(
         #     preprocess_frame,
         #     text="Remove EOG Channels",
@@ -152,7 +163,6 @@ class MainView:
         # Details frames
         self.detail_panel = ttk.Frame(side_panel, padding=10, borderwidth=2, relief="ridge")
         self.detail_panel.grid(row=1, column=0, sticky="nsew")
-
         ttk.Label(self.detail_panel, text="Details", anchor="w").pack(padx=5)
 
         # Tabbed view for main content
@@ -208,10 +218,10 @@ class MainView:
     def clear_psd_frame(self):
         """Clear all widgets from the PSD frame and return the figure to be closed."""
         fig = None
-        if hasattr(self, 'psd_canvas') and self.psd_canvas:
-            fig = self.psd_canvas.figure
-            self.psd_canvas.get_tk_widget().destroy()
-            self.psd_canvas = None
+        if hasattr(self, 'psd_canvas') and self.spectrum_canvas:
+            fig = self.spectrum_canvas.figure
+            self.spectrum_canvas.get_tk_widget().destroy()
+            self.spectrum_canvas = None
         for widget in self.psd_frame.winfo_children():
             widget.destroy()
         return fig
@@ -240,9 +250,9 @@ class MainView:
     def embed_psd_figure(self, fig):
         """Embed a matplotlib figure into the PSD frame."""
         self.clear_psd_frame()
-        self.psd_canvas = FigureCanvasTkAgg(fig, master=self.psd_frame)
-        self.psd_canvas.draw()
-        self.psd_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        self.spectrum_canvas = FigureCanvasTkAgg(fig, master=self.psd_frame)
+        self.spectrum_canvas.draw()
+        self.spectrum_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
     # Static Methods
     # =================================================
