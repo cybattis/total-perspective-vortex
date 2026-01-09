@@ -9,6 +9,7 @@ YELLOW='\033[0;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
+# Function to clean the project directory
 clean_project() {
     echo -e "${BLUE}--- Cleaning Project Directory ---${NC}"
 
@@ -46,6 +47,18 @@ show_help() {
     printf "\n"
 }
 
+# function to check installation of a package with argument and visual feedback
+check_package_installation() {
+    PACKAGE_NAME=$1
+    echo -n "🔍 Checking installation of package '$PACKAGE_NAME'... "
+    if python3 -c "import $PACKAGE_NAME" &>/dev/null; then
+        echo -e "${GREEN}Installed ✅${NC}"
+    else
+        echo -e "${RED}Not Installed ❌${NC}"
+        exit 1
+    fi
+}
+
 case "$1" in
     install|"-i"|"")
         ;;
@@ -62,7 +75,6 @@ case "$1" in
         exit 1
         ;;
 esac
-
 
 echo -e "${BLUE}--- Starting MULTILAYER PERCEPTRON Project Setup ---${NC}"
 
@@ -100,6 +112,12 @@ pip install . > /dev/null
 echo -e "${GREEN}✅ Dependencies installed successfully.${NC}"
 
 echo "🔬 Verifying installation..."
+check_package_installation "sklearn"
+check_package_installation "mne"
+check_package_installation "numpy"
+check_package_installation "matplotlib"
+check_package_installation "pandas"
+
 if python -c "import sklearn, mne, numpy" &>/dev/null; then
     echo -e "${GREEN}✅ Core libraries (sklearn, mne) imported successfully.${NC}"
 else
