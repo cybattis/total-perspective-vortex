@@ -18,7 +18,9 @@ from mne import Epochs, pick_types, events_from_annotations
 from mne.channels import make_standard_montage
 from mne.io import concatenate_raws, read_raw_edf
 from mne.datasets import eegbci
-from mne.decoding import CSP
+from mne.decoding import CSP, get_spatial_filter_from_estimator
+
+from settings import Settings
 
 RUN_TASKS = {
     1: [3, 7, 11],  # Real open and close fist
@@ -27,104 +29,99 @@ RUN_TASKS = {
     4: [6, 10, 14]  # Imagine open and close fist and feet
 }
 
-ANNOTATIONS = {
-    "T0": "Resting state",
-    "T1": "Left hand, eyes open",
-    "T2": "Right hand, eyes closed"
-}
-
 class EEGClassifier:
-    def __init__(self, subjects, tasks, dataset_path, show_montage=False):
-        self.subjects = subjects
-        self.runs = RUN_TASKS[tasks]
+    def __init__(self, settings: Settings, dataset_path: str):
+        self.show_plots = not settings.no_plot
+        self.subjects = settings.subjects
+        self.runs = RUN_TASKS[settings.task]
 
         raw_fnames = eegbci.load_data(self.subjects, self.runs, path=dataset_path)
         self.raw = concatenate_raws([read_raw_edf(f, preload=True) for f in raw_fnames])
         eegbci.standardize(self.raw)  # set channel names
+        self.raw.annotations.rename(dict(T1="hands", T2="feet"))  # as documented on PhysioNet
+        self.raw.set_eeg_reference(projection=True)
 
         # Set montage
         montage = make_standard_montage("standard_1005")
         self.raw.set_montage(montage)
 
-        if show_montage:
+        if settings.show_montage:
             self.raw.plot_sensors(show_names=True, sphere="eeglab")
             print(montage)
+
+        # Filtering
+        self.raw.notch_filter(60, fir_design='firwin')
+        self.raw_filtered = self.raw.copy().filter(7.0, 30.0, fir_design="firwin", skip_by_annotation="edge", verbose=False)
 
 
     def plot_raw_and_filtered(self):
         """
-        Génère et affiche côte à côte les densités spectrales (PSD) des données brutes et filtrées.
+        Plot raw and filtered EEG data for comparison.
         """
-        # Création d'une figure avec 2 sous-graphiques (1 ligne, 2 colonnes)
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+        _, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6), sharex=True, sharey=True)
 
-        # 1. Spectre des données brutes
-        # picks="data" sélectionne automatiquement les bons canaux (ici EEG)
-        spectrum_raw = self.raw.compute_psd()
-        spectrum_raw.plot(average=True, picks="data", exclude="bads", amplitude=False, axes=ax1, show=False)
-        ax1.set_title("Spectre : Données Brutes (Raw)")
+        # Raw data
+        times = self.raw.times
+        data_raw = self.raw.get_data(picks="eeg", units="uV")
+        # Filtered data
+        data_filtered = self.raw_filtered.get_data(picks="eeg", units="uV")
 
-        # 2. Spectre des données filtrées
-        # Important : On utilise .copy() pour ne pas altérer self.raw en place
-        raw_filtered = self.raw.copy()
-        raw_filtered.filter(7.0, 30.0, fir_design="firwin", skip_by_annotation="edge", verbose=False)
+        if self.show_plots:
+            ax1.plot(times, data_raw.T, color='k', linewidth=0.2, alpha=0.5)
+            ax1.set_title("Données Brutes (Raw)")
+            ax1.set_xlabel("Temps (s)")
+            ax1.set_ylabel("Amplitude (µV)")
 
-        spectrum_filtered = raw_filtered.compute_psd()
-        spectrum_filtered.plot(average=True, picks="data", exclude="bads", amplitude=False, axes=ax2, show=False)
-        ax2.set_title("Spectre : Données Filtrées (Filtered)")
+            ax2.plot(times, data_filtered.T, color='k', linewidth=0.2, alpha=0.5)
+            ax2.set_title("Données Filtrées (7-30 Hz)")
+            ax2.set_xlabel("Temps (s)")
 
-        plt.tight_layout()
-        plt.show()
-
+            plt.suptitle("Comparaison Temporelle (Tous canaux)")
+            plt.tight_layout()
+            plt.show()
 
 
     def run(self):
         """
         Main function to run the EEG classification pipeline.
         """
-        # avoid classification of evoked responses by using epochs that start 1s after cue onset.
+        self.plot_raw_and_filtered()
+
+        # Avoid classification of evoked responses by using epochs that start 1s after cue onset.
         tmin, tmax = -1.0, 4.0
-        event_id = dict(hands=2, feet=3)
-
-        raw = self.raw.copy().crop(tmin=tmin, tmax=tmax)
-
-        # Apply band-pass filter
-        raw.filter(7.0, 30.0, fir_design="firwin", skip_by_annotation="edge")
 
         # #############################################################################
         # Read epochs
-
-        events, _ = events_from_annotations(raw, event_id=dict(T1=2, T2=3))
-        picks = pick_types(raw.info, meg=False, eeg=True, stim=False, eog=False, exclude="bads")
+        picks = pick_types(self.raw_filtered.info, meg=False, eeg=True, stim=False, eog=False, exclude="bads")
 
         # Read epochs (train will be done only between 1 and 2s)
         # Testing will be done with a running classifier
         epochs = Epochs(
-            raw,
-            events,
-            event_id,
-            tmin,
-            tmax,
+            self.raw_filtered,
+            event_id=["hands", "feet"],
+            tmin=tmin,
+            tmax=tmax,
             proj=True,
             picks=picks,
             baseline=None,
             preload=True,
         )
-        epochs_train = epochs.copy().crop(tmin=1.0, tmax=2.0)
+        epochs_train = epochs.copy().crop(tmin=0.5, tmax=2.5)
         labels = epochs.events[:, -1] - 2
 
         # #############################################################################
         # # Classification with CSP + LDA
 
         # Define a monte-carlo cross-validation generator (reduce variance):
-        epochs_data = epochs.get_data()
-        epochs_data_train = epochs_train.get_data()
+        scores = []
+        epochs_data = epochs.get_data(copy=False)
+        epochs_data_train = epochs_train.get_data(copy=False)
         cv = ShuffleSplit(10, test_size=0.2, random_state=42)
         cv_split = cv.split(epochs_data_train)
 
         # Assemble a classifier
         lda = LinearDiscriminantAnalysis()
-        csp = CSP(n_components=4, reg=None, log=True, norm_trace=False)
+        csp = CSP(n_components=8, reg='ledoit_wolf', log=True, norm_trace=False)
 
         # Use scikit-learn Pipeline with cross_val_score function
         clf = Pipeline([("CSP", csp), ("LDA", lda)], memory=None)
@@ -133,52 +130,20 @@ class EEGClassifier:
         # Printing the results
         class_balance = np.mean(labels == labels[0])
         class_balance = max(class_balance, 1.0 - class_balance)
-        print(
-            "Classification accuracy: %f / Chance level: %f" % (np.mean(scores), class_balance)
-        )
+        print(f"Classification accuracy: {np.mean(scores)} / Chance level: {class_balance}")
 
-        # plot CSP patterns estimated on full data for visualization
-        csp.fit_transform(epochs_data_train, labels)
+        # plot eigenvalues and patterns estimated on full data for visualization
+        csp.fit_transform(epochs_data, labels)
 
-        # Plot CSP patterns (only first 4 components to avoid the warning)
-        fig_patterns = csp.plot_patterns(
-            epochs.info, ch_type="eeg", units="Patterns (AU)", size=1.5,
-            components=np.arange(4), show=False
-        )
-
-        # Handle both single figure and list of figures
-        if isinstance(fig_patterns, list):
-            for idx, fig in enumerate(fig_patterns):
-                fig.savefig(f"csp_patterns_{idx}.png", dpi=100, bbox_inches='tight')
-                plt.close(fig)
-            print(f"CSP patterns saved to csp_patterns_0.png to csp_patterns_{len(fig_patterns)-1}.png")
-        else:
-            fig_patterns.savefig("csp_patterns.png", dpi=100, bbox_inches='tight')
-            print("CSP patterns saved to csp_patterns.png")
-            plt.close(fig_patterns)
-
-        # Plot CSP filters (only first 4 components)
-        fig_filters = csp.plot_filters(
-            epochs.info, ch_type="eeg", units="Filters (AU)", size=1.5,
-            components=np.arange(4), show=False
-        )
-
-        # Handle both single figure and list of figures
-        if isinstance(fig_filters, list):
-            for idx, fig in enumerate(fig_filters):
-                fig.savefig(f"csp_filters_{idx}.png", dpi=100, bbox_inches='tight')
-                plt.close(fig)
-            print(f"CSP filters saved to csp_filters_0.png to csp_filters_{len(fig_filters)-1}.png")
-        else:
-            fig_filters.savefig("csp_filters.png", dpi=100, bbox_inches='tight')
-            print("CSP filters saved to csp_filters.png")
-            plt.close(fig_filters)
+        if self.show_plots:
+            spf = get_spatial_filter_from_estimator(csp, info=epochs.info)
+            spf.plot_scree()
+            spf.plot_patterns(components=np.arange(4))
 
         # #############################################################################
         # # Classification with cross-validation
 
-        # Running classifier: test classifier on sliding window
-        sfreq = raw.info["sfreq"]
+        sfreq = self.raw_filtered.info["sfreq"]
         w_length = int(sfreq * 0.5)  # running classifier: window length
         w_step = int(sfreq * 0.1)  # running classifier: window step size
         w_start = np.arange(0, epochs_data.shape[2] - w_length, w_step)
@@ -197,27 +162,46 @@ class EEGClassifier:
             # running classifier: test classifier on sliding window
             score_this_window = []
             for n in w_start:
-                X_test = csp.transform(epochs_data[test_idx][:, :, n : (n + w_length)])
+                X_test = csp.transform(epochs_data[test_idx][:, :, n: (n + w_length)])
                 score_this_window.append(lda.score(X_test, y_test))
             scores_windows.append(score_this_window)
 
         # Plot scores over time
         w_times = (w_start + w_length / 2.0) / sfreq + epochs.tmin
 
-        # #############################################################################
-        # Visualize classification over time
+        if self.show_plots:
+            plt.figure()
+            plt.plot(w_times, np.mean(scores_windows, 0), label="Score")
+            plt.axvline(0, linestyle="--", color="k", label="Onset")
+            plt.axhline(0.5, linestyle="-", color="k", label="Chance")
+            plt.xlabel("time (s)")
+            plt.ylabel("classification accuracy")
+            plt.title("Classification score over time")
+            plt.legend(loc="lower right")
+            plt.show()
+            plt.close()
 
-        fig = plt.figure(figsize=(8, 6))
-        plt.plot(w_times, np.mean(scores_windows, 0), label="Score")
-        plt.axvline(0, linestyle="--", color="k", label="Onset")
-        plt.axhline(0.5, linestyle="-", color="k", label="Chance")
-        plt.xlabel("time (s)")
-        plt.ylabel("classification accuracy")
-        plt.title("Classification score over time")
-        plt.legend(loc="lower right")
-        plt.tight_layout()
-        plt.savefig("classification_over_time.png", dpi=100, bbox_inches='tight')
-        print("Classification over time plot saved to classification_over_time.png")
-        plt.close(fig)
+        # Calcul des statistiques résumées
+        mean_score = np.mean(scores)
+        std_score = np.std(scores)
+        mean_scores_time = np.mean(scores_windows, 0)
+        max_score_time = np.max(mean_scores_time)
+
+        print("\n" + "=" * 60)
+        print(f"{'RÉSUMÉ DES RÉSULTATS DE CLASSIFICATION':^60}")
+        print("=" * 60)
+        print(f"{'Précision Moyenne (Cross-Val)':<30} : {mean_score:.2%} (+/- {std_score:.2%})")
+        print(f"{'Niveau de Chance':<30} : {class_balance:.2%}")
+        print("-" * 60)
+        print("Analyse Temporelle :")
+        print(f"{'  Score Max Atteint':<30} : {max_score_time:.2%}")
+        print(f"{'  Écart-type sur le temps':<30} : {np.std(mean_scores_time):.4f}")
+        print("-" * 60)
+
+        # Configuration de l'affichage numpy pour le tableau de scores (plus compact)
+        with np.printoptions(formatter={'float': lambda x: f"{x: 0.2f}"}, linewidth=60):
+            print("Profil des scores (fenêtre glissante) :")
+            print(mean_scores_time)
+        print("=" * 60 + "\n")
 
         print("\nAll analysis complete! Check the generated PNG files for visualizations.")
