@@ -22,7 +22,7 @@ clean_project() {
     rm -rf .venv
 
     echo "🗑️  Removing build files (egg-info, build)..."
-    rm -rf build *.egg-info
+    rm -rf build ./*.egg-info
 
     echo "🗑️  Removing Python cache files (__pycache__, *.pyc)..."
     find . -type d -name "__pycache__" -exec rm -rf {} +
@@ -34,7 +34,6 @@ clean_project() {
 
 # Function to display a formatted help message
 show_help() {
-    # Using printf for aligned columns. The %-20s reserves 20 characters for the command string.
     printf "\n"
     printf "${BLUE}Usage:${NC}\n"
     printf "  %s [command]\n\n" "$0"
@@ -51,7 +50,8 @@ show_help() {
 check_package_installation() {
     PACKAGE_NAME=$1
     echo -n "🔍 Checking installation of package '$PACKAGE_NAME'... "
-    if python3 -c "import $PACKAGE_NAME" &>/dev/null; then
+    # Use the discovered python executable
+    if "$PYTHON_EXEC" -c "import $PACKAGE_NAME" &>/dev/null; then
         echo -e "${GREEN}Installed ✅${NC}"
     else
         echo -e "${RED}Not Installed ❌${NC}"
@@ -76,22 +76,38 @@ case "$1" in
         ;;
 esac
 
-echo -e "${BLUE}--- Starting MULTILAYER PERCEPTRON Project Setup ---${NC}"
+echo -e "${BLUE}--- Starting Total-Perspective-Vortex Project Setup ---${NC}"
 
-echo "🔎 Checking Python version..."
-if ! python3 -c 'import sys; assert sys.version_info >= (3, 10)' &>/dev/null; then
-    echo -e "${RED}ERROR: Python 3.11 or higher is required.${NC}"
-    echo "Please install a compatible Python version and try again."
+echo "🔎 Searching for most recent compatible Python version..."
+
+# List of potential python executables to check, from newest to oldest
+CANDIDATES=("python3")
+PYTHON_EXEC=""
+
+for cmd in "${CANDIDATES[@]}"; do
+    if command -v "$cmd" &> /dev/null; then
+        # Check if version is >= 3.11
+        if "$cmd" -c 'import sys; assert sys.version_info >= (3, 10)' &>/dev/null; then
+            PYTHON_EXEC="$cmd"
+            VERSION_STR=$($cmd --version)
+            echo -e "${GREEN}✅ Selected $VERSION_STR ($cmd)${NC}"
+            break
+        fi
+    fi
+done
+
+if [ -z "$PYTHON_EXEC" ]; then
+    echo -e "${RED}ERROR: No compatible Python version found (>= 3.10).${NC}"
+    echo "Please install Python 3.11 or higher."
     exit 1
 fi
-echo -e "${GREEN}✅ Python version is compatible.${NC}"
 
 VENV_DIR=".venv"
 if [ -d "$VENV_DIR" ]; then
     echo "♻️  Virtual environment '$VENV_DIR' already exists. Skipping creation."
 else
-    echo "🐍 Creating virtual environment in '$VENV_DIR'..."
-    python3 -m venv "$VENV_DIR"
+    echo "🐍 Creating virtual environment in '$VENV_DIR' using $PYTHON_EXEC..."
+    "$PYTHON_EXEC" -m venv "$VENV_DIR"
     echo -e "${GREEN}✅ Virtual environment created.${NC}"
 fi
 
@@ -107,10 +123,17 @@ source "$ACTIVATE_SCRIPT"
 
 echo "📦 Installing project dependencies from pyproject.toml..."
 pip install --upgrade pip > /dev/null
-pip install . > /dev/null
+# This installs the package itself plus the [dev] optional dependencies
+pip install ".[dev]" > /dev/null
 echo -e "${GREEN}✅ Dependencies installed successfully.${NC}"
 
 echo "🔬 Verifying installation..."
+# Note: check_package_installation now uses $PYTHON_EXEC, but inside the venv
+# 'python3' and '$PYTHON_EXEC' might point to the venv python depending on linking.
+# However, inside venv, we usually just want 'python' or 'python3'.
+# Resetting PYTHON_EXEC to 'python' ensures we check packages inside the active venv.
+PYTHON_EXEC="python"
+
 check_package_installation "sklearn"
 check_package_installation "mne"
 check_package_installation "numpy"

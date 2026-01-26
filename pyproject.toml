@@ -14,9 +14,9 @@ description = "A Python project utilizing scikit-learn and MNE for machine learn
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "scikit-learn==1.8.0",
+    "scikit-learn==1.7.2",
     "mne==1.11.0",
-    "numpy==2.4.1",
+    "numpy==2.2.6",
     "pandas==2.3.3",
     "matplotlib==3.10.8",
     "PyQt5==5.15.11"
