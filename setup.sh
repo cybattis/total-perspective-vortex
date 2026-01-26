@@ -95,7 +95,6 @@ else
     echo -e "${GREEN}✅ Virtual environment created.${NC}"
 fi
 
-
 if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
     ACTIVATE_SCRIPT="$VENV_DIR/Scripts/activate"
 else
@@ -117,13 +116,6 @@ check_package_installation "mne"
 check_package_installation "numpy"
 check_package_installation "matplotlib"
 check_package_installation "pandas"
-
-if python -c "import sklearn, mne, numpy" &>/dev/null; then
-    echo -e "${GREEN}✅ Core libraries (sklearn, mne) imported successfully.${NC}"
-else
-    echo -e "${RED}ERROR: Failed to import one of the core libraries. Installation may have failed.${NC}"
-    exit 1
-fi
 
 echo "🔗 Checking for dependency conflicts..."
 if ! pip check &>/dev/null; then
