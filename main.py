@@ -15,13 +15,12 @@ dataset_path = "./datasets"
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process EDF and event files for a given subject and task.")
-    parser.add_argument("-d", "--download", action="store_true", help="Download all dataset")
-    parser.add_argument("-m", "--montage", action="store_true", help="Show montage plot")
-    parser.add_argument("-nop", "--no-plot", action="store_true", help="Do not show plots")
+    parser.add_argument("-d", "--download", action="store_true", default=False, help="Download all dataset")
+    parser.add_argument("-m", "--montage", action="store_true", default=False, help="Show montage plot")
+    parser.add_argument("-nop", "--no-plot", action="store_true", default=False, help="Do not show plots")
     parser.add_argument("-s", "--subject", type=int, default=1, help="Subject ID (e.g., 1)")
     parser.add_argument("-t", "--task", type=int, default=1, help="Task ID (e.g., 1)")
-    parser.add_argument("-A", "--all", action="store_false", help="Run all tasks for all subjects")
-
+    parser.add_argument("-A", "--all", action="store_false", default=False, help="Run all tasks for all subjects")
     args = parser.parse_args()
     settings = Settings(args)
     settings.dataset_path = dataset_path

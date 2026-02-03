@@ -21,6 +21,8 @@ from mne.channels import make_standard_montage
 from mne.io import concatenate_raws, read_raw_edf
 from mne.datasets import eegbci
 from mne.decoding import CSP
+# from mne.preprocessing import find_bad_channels_ransac
+
 
 from settings import Settings
 
@@ -30,6 +32,14 @@ RUN_TASKS = {
     3: [5, 9, 13],  # Real open and close fist and feets
     4: [6, 10, 14]  # Imagine open and close fist and feet
 }
+
+BAD_CHANNELS = {
+    1: 'FP1',
+    2: 'FP2',
+    3: 'F3',
+    4: 'F4',
+}
+
 
 class EEGClassifier:
     def __init__(self, subject: int, task: int, settings: Settings):
@@ -55,13 +65,12 @@ class EEGClassifier:
         self.raw.notch_filter(60, fir_design='firwin', skip_by_annotation='edge')
         self.raw_filtered = self.raw.copy().filter(7.0, 30.0, fir_design="firwin", skip_by_annotation="edge")
 
-
     def _plot_results(self, w_times, mean_scores, csp, epochs, stats):
         """
         Combine all visualizations into a single final figure.
         Adds textual statistics to the right of the temporal plot.
         """
-        fig = plt.figure(figsize=(16, 12), constrained_layout=True)
+        fig = plt.figure(figsize=(12, 8), constrained_layout=True)
         # Grid: 3 rows, 4 columns
         gs = GridSpec(3, 4, figure=fig, height_ratios=[1, 1, 1])
 
@@ -107,7 +116,7 @@ class EEGClassifier:
         # Style box to prettify the text
         props = dict(boxstyle='round,pad=1', facecolor='#f0f0f0', edgecolor='#bdbdbd', alpha=0.9)
         ax_text.text(0.05, 0.5, text_str, transform=ax_text.transAxes,
-                     va='center', ha='left', fontsize=11, family='monospace',
+                     va='center', ha='left', fontsize=10, family='monospace',
                      bbox=props, linespacing=1.6)
 
         # 5. CSP Patterns (Top 4 components) - full bottom row
@@ -116,9 +125,8 @@ class EEGClassifier:
             plot_topomap(csp.patterns_[i], epochs.info, axes=ax_pattern, show=False)
             ax_pattern.set_title(f"CSP Pattern {i+1}")
 
-        plt.suptitle(f"EEG Analysis Summary - Subject(s): {self.subject}", fontsize=16)
+        plt.suptitle(f"EEG Analysis Summary - Subject(s): {self.subject}", fontsize=12)
         plt.show()
-
 
     def run(self):
         """
@@ -126,6 +134,21 @@ class EEGClassifier:
         """
         # Avoid classification of evoked responses by using epochs that start 1s after cue onset.
         tmin, tmax = -1.0, 4.0
+
+        # Drop bad channels - channels prone to artifacts
+        bad_channels_to_drop = [
+            'Fp1', 'Fp2',  # Frontal pole - eye movement artifacts
+            # 'F7', 'F8',    # Lateral frontal - eye and muscle artifacts
+            # 'T7', 'T8',    # Temporal - muscle artifacts (jaw clenching)
+            # 'AF7', 'AF8'   # Anterior frontal - eye artifacts
+        ]
+
+        # Only drop channels that exist in the data
+        channels_to_drop = [ch for ch in bad_channels_to_drop if ch in self.raw.ch_names]
+        if channels_to_drop:
+            self.raw.drop_channels(channels_to_drop)
+            print(f"Dropped bad channels: {channels_to_drop}")
+
 
         # #############################################################################
         # Read epochs
@@ -143,6 +166,8 @@ class EEGClassifier:
             baseline=None,
             preload=True,
         )
+        # epochs.plot_drop_log()
+
         epochs_train = epochs.copy().crop(tmin=0.5, tmax=2.5)
         labels = epochs.events[:, -1] - 2
 
