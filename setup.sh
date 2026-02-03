@@ -98,7 +98,7 @@ done
 
 if [ -z "$PYTHON_EXEC" ]; then
     echo -e "${RED}ERROR: No compatible Python version found (>= 3.10).${NC}"
-    echo "Please install Python 3.11 or higher."
+    echo "Please install Python 3.10 or higher."
     exit 1
 fi
 
@@ -124,7 +124,7 @@ source "$ACTIVATE_SCRIPT"
 echo "📦 Installing project dependencies from pyproject.toml..."
 pip install --upgrade pip > /dev/null
 # This installs the package itself plus the [dev] optional dependencies
-pip install ".[dev]" > /dev/null
+pip install --progress-bar off --quiet ".[dev]"
 echo -e "${GREEN}✅ Dependencies installed successfully.${NC}"
 
 echo "🔬 Verifying installation..."
