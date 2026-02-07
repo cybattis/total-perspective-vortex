@@ -7,21 +7,21 @@ Decoding of motor imagery applied to EEG data decomposed using CSP. A LinearDisc
 classifier is used to classify left vs right hand movement from MEG data. This is based on the MNE
 example: https://mne.tools/1.4/auto_examples/decoding/decoding_csp_eeg.html
 """
-import numpy as np
 import matplotlib.pyplot as plt
+import mne
 from matplotlib.gridspec import GridSpec
 from mne.viz import plot_topomap
+from sklearn.linear_model import LogisticRegression
 
 from sklearn.pipeline import Pipeline
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.model_selection import ShuffleSplit, cross_val_score
 
-from mne import Epochs, pick_types
+from mne import Epochs, pick_types, events_from_annotations
 from mne.channels import make_standard_montage
 from mne.io import concatenate_raws, read_raw_edf
 from mne.datasets import eegbci
 from mne.decoding import CSP
-
 
 from settings import Settings
 
@@ -48,8 +48,12 @@ experiments = [
     }
 ]
 
+crop_train = True
+
 class EEGClassifier:
     def __init__(self, subject: int, task: int, settings: Settings):
+        mne.set_log_level('WARNING')
+
         self.settings = settings
         self.subject = subject
         self.task = task
@@ -57,120 +61,92 @@ class EEGClassifier:
         self.mapping = experiments[task-1].get("mapping")
         self.event_id = experiments[task-1].get("event_id")
 
+        # Load data
         raw_fnames = eegbci.load_data(self.subject, self.runs, path=settings.dataset_path, verbose=False)
         self.raw = concatenate_raws([read_raw_edf(f, preload=True) for f in raw_fnames])
-        self.raw.annotations.rename(self.mapping)  # as documented on PhysioNet
+
+        self.raw.annotations.rename(self.mapping)
         self.raw.set_eeg_reference(projection=True)
 
-        # Set montage
+
+    def _preprocess(self):
         eegbci.standardize(self.raw)  # set channel names
-        montage = make_standard_montage("standard_1005")
-        self.raw.set_montage(montage, on_missing="ignore")
+        montage = make_standard_montage("biosemi64")
+        self.raw.set_montage(montage, on_missing='ignore')
 
         if self.settings.show_montage:
             self.raw.plot_sensors(show_names=True, sphere="eeglab")
             print(montage)
 
-        # Filtering
-        self.raw.notch_filter(60, fir_design='firwin', skip_by_annotation='edge')
-        self.raw_filtered = self.raw.copy().filter(8.0, 40.0, fir_design="firwin", skip_by_annotation="edge")
+        # Select channels
+        channels = self.raw.info["ch_names"]
+        good_channels = [
+            "FC3",
+            "FC1",
+            "FCz",
+            "FC2",
+            "FC4",
+            "C3",
+            "C1",
+            "Cz",
+            "C2",
+            "C4",
+            "CP3",
+            "CP1",
+            "CPz",
+            "CP2",
+            "CP4",
+            "Fpz",
+        ]
+        bad_channels = [x for x in channels if x not in good_channels]
+        self.raw.drop_channels(bad_channels)
 
+        # Filter
+        raw_filtered = self.raw.copy()
+        raw_filtered.notch_filter(60, method="iir")
+        raw_filtered.filter(7.0, 32.0, fir_design="firwin", skip_by_annotation="edge") # 8Hz-40Hz for motor imagery
+
+        return raw_filtered
+
+    def _create_model(self):
+        # Decomposer
+        csp = CSP(n_components=16)
+        # Classifier l1_ratio
+        logr = LogisticRegression(solver='liblinear', verbose=False)
+        # Pipeline
+        clf = Pipeline([("CSP", csp), ("LogisticRegression", logr)], memory=None, verbose=False)
+        return clf
 
     def run(self):
         """
         Main function to run the EEG classification pipeline.
         """
+        raw_filtered = self._preprocess()
+
         # Avoid classification of evoked responses by using epochs that start 1s after cue onset.
-        tmin, tmax = 0.5, 4.0
+        tmin, tmax = -1.0, 2.0
 
-        # #############################################################################
-        # Read epochs
-        picks = pick_types(self.raw_filtered.info, meg=False, eeg=True, stim=False, eog=False, exclude="bads")
+        events, _ = events_from_annotations(raw_filtered, event_id=experiments[self.task-1]['event_id'], verbose=False)
+        picks = pick_types(raw_filtered.info, meg=False, eeg=True, stim=False, eog=False, exclude="bads")
+        epochs = Epochs(raw_filtered, events, experiments[self.task-1]["event_id"], tmin, tmax, proj=True, picks=picks, baseline=None, preload=True, verbose=False)
+        epochs_data = epochs.get_data()
+        labels = epochs.events[:, -1]
 
-        # Read epochs based on annotations (events) in the raw data.
-        epochs = Epochs(
-            self.raw_filtered,
-            event_id=self.event_id,
-            tmin=tmin,
-            tmax=tmax,
-            proj=True,
-            picks=picks,
-            baseline=None,
-            preload=True,
-        )
-        epochs_train = epochs.copy().crop(tmin=0.5, tmax=3.5)
-        labels = epochs.events[:, -1] - 2
-
-        # #############################################################################
-        # # Classification with CSP + LDA
-
-        # Define a monte-carlo cross-validation generator (reduce variance):
-        epochs_data = epochs.get_data(copy=False)
-        epochs_data_train = epochs_train.get_data(copy=False)
+        # monte-carlo cross-validation generator:
         cv = ShuffleSplit(10, test_size=0.2, random_state=42)
-        cv_split = cv.split(epochs_data_train)
 
-        # Assemble a classifier
-        lda = LinearDiscriminantAnalysis()
-        csp = CSP(n_components=4, reg='ledoit_wolf', log=True, norm_trace=False)
+        # Display accuracy
+        model = self._create_model()
+        epochs_train = epochs.copy()
+        if crop_train:
+            epochs_train = epochs_train.crop(1, 2)
+        score = cross_val_score(model, epochs_train.get_data(), labels, cv=cv, verbose=False)
+        model.fit(epochs_data, labels)
+        accuracy = model.score(epochs_data, labels)
 
-        # Use scikit-learn Pipeline with cross_val_score function
-        clf = Pipeline([("CSP", csp), ("LDA", lda)], memory=None)
-        scores = cross_val_score(clf, epochs_data_train, labels, cv=cv, n_jobs=None)
+        return accuracy, score
 
-        # plot eigenvalues and patterns estimated on full data for visualization
-        csp.fit(epochs_data, labels)
-
-        # #############################################################################
-        # # Classification with cross-validation
-
-        sfreq = self.raw_filtered.info["sfreq"]
-        w_length = int(sfreq * 0.5)  # running classifier: window length
-        w_step = int(sfreq * 0.1)  # running classifier: window step size
-        w_start = np.arange(0, epochs_data.shape[2] - w_length, w_step)
-
-        scores_windows = []
-
-        for train_idx, test_idx in cv_split:
-            y_train, y_test = labels[train_idx], labels[test_idx]
-
-            X_train = csp.fit_transform(epochs_data_train[train_idx], y_train)
-            csp.transform(epochs_data_train[test_idx])
-
-            # fit classifier
-            lda.fit(X_train, y_train)
-
-            # running classifier: test classifier on sliding window
-            score_this_window = []
-            for n in w_start:
-                X_test = csp.transform(epochs_data[test_idx][:, :, n: (n + w_length)])
-                score_this_window.append(lda.score(X_test, y_test))
-            scores_windows.append(score_this_window)
-
-        # Plot scores over time
-        w_times = (w_start + w_length / 2.0) / sfreq + epochs.tmin
-
-        # Calcul des statistiques résumées
-        class_balance = np.mean(labels == labels[0])
-        class_balance = max(class_balance, 1.0 - class_balance)
-        mean_score = np.mean(scores)
-        std_score = np.std(scores)
-        mean_scores_time = np.mean(scores_windows, 0)
-        max_score_time = np.max(mean_scores_time)
-
-        result = {
-            "mean": mean_score,
-            "std": std_score,
-            "balance": class_balance,
-            "max": max_score_time
-        }
-
-        if self.settings.plot:
-            self._plot_results(w_times, mean_scores_time, csp, epochs, result)
-
-        return result
-
-    def _plot_results(self, w_times, mean_scores, csp, epochs, stats):
+    def _plot_results(self, w_times, mean_scores, csp, epochs, stats, raw_filtered):
         """
         Combine all visualizations into a single final figure.
         Adds textual statistics to the right of the temporal plot.
@@ -191,7 +167,7 @@ class EEGClassifier:
         ax1.set_ylabel("Amplitude (µV)")
 
         # 2. Filtered Signals
-        data_filtered = self.raw_filtered.get_data(picks="eeg", units="uV")
+        data_filtered = raw_filtered.get_data(picks="eeg", units="uV")
         ax2 = fig.add_subplot(gs[0, 2:])
         ax2.plot(times, data_filtered.T, color='k', linewidth=0.2, alpha=0.5)
         ax2.set_title("Filtered Data (7-30 Hz)")

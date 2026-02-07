@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 import mne
 from mne.datasets.eegbci import eegbci
+from sklearn.metrics import accuracy_score
 
 # Ajouter le dossier src au PYTHONPATH
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
@@ -21,14 +22,11 @@ def download_dataset() -> None:
 
     print(f"Dataset téléchargé dans : {dataset_path}")
 
-def print_verbose_results(_subject: int, _task: int, task_result) -> None:
-    print(f"S{_subject:03d} T{_task} "
-          f"| AvgAcc(CV): {task_result['mean']:.2%} (±{task_result['std']:.2%}) "
-          f"| Chance: {task_result['balance']:.2%} "
-          f"| Max: {task_result['max']:.2%}")
+def print_verbose_results(_subject: int, _task: int, accuracy, score) -> None:
+    print(f"S{_subject:03d} T{_task} | Accuracy: {accuracy:.2%} (score: {score.mean():.2} ~{score.std():.2})")
 
 if __name__ == "__main__":
-    mne.set_log_level("WARNING")
+    mne.set_log_level("CRITICAL")
 
     parser = argparse.ArgumentParser(description="Process EDF and event files for a given subject and task.")
 
@@ -61,12 +59,12 @@ if __name__ == "__main__":
     for subject in subjects:
         for task in tasks:
             egg = EEGClassifier(subject, task, settings)
-            result = egg.run()
+            accuracy, score = egg.run()
 
             if args.verbose:
-                print_verbose_results(subject, task, result)
+                print_verbose_results(subject, task, accuracy, score)
 
-            tasks_result[task - 1].append(result.get("mean"))
+            tasks_result[task - 1].append(accuracy)
 
     print("\nTask averages:")
     mean_acc = [sum(r) / len(r) for r in tasks_result]
