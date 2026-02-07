@@ -21,144 +21,76 @@ from mne.channels import make_standard_montage
 from mne.io import concatenate_raws, read_raw_edf
 from mne.datasets import eegbci
 from mne.decoding import CSP
-# from mne.preprocessing import find_bad_channels_ransac
 
 
 from settings import Settings
 
-RUN_TASKS = {
-    1: [3, 7, 11],  # Real open and close fist
-    2: [4, 8, 12],  # Imagine Open and close fist
-    3: [5, 9, 13],  # Real open and close fist and feets
-    4: [6, 10, 14]  # Imagine open and close fist and feet
-}
-
-BAD_CHANNELS = {
-    1: 'FP1',
-    2: 'FP2',
-    3: 'F3',
-    4: 'F4',
-}
-
+experiments = [
+    {
+        "runs": [3, 7, 11],
+        "mapping": {'T0': "rest", 'T1': "left/fist", 'T2': "right/fist"},
+        "event_id": {"left/fist": 1, "right/fist": 2},
+    },
+    {
+        "runs": [4, 8, 12],
+        "mapping": {'T0': "rest", 'T1': "left/imaginefist", 'T2': "right/imaginefist"},
+        "event_id": {"left/imaginefist":1, "right/imaginefist":2},
+    },
+    {
+        "runs": [5, 9, 13],
+        "mapping": {'T0': "rest", 'T1': "top/fists", 'T2': "bottom/feets"},
+        "event_id": {"top/fists": 1, "bottom/feets": 2},
+    },
+    {
+        "runs": [6, 10, 14],
+        "mapping": {'T0': "rest", 'T1': "top/imaginefists", 'T2': "top/imaginefeets"},
+        "event_id": {"top/imaginefists": 1, "top/imaginefeets": 2},
+    }
+]
 
 class EEGClassifier:
     def __init__(self, subject: int, task: int, settings: Settings):
-        self.show_plots = not settings.no_plot
+        self.settings = settings
         self.subject = subject
-        self.runs = RUN_TASKS[task]
+        self.task = task
+        self.runs = experiments[task-1].get("runs")
+        self.mapping = experiments[task-1].get("mapping")
+        self.event_id = experiments[task-1].get("event_id")
 
         raw_fnames = eegbci.load_data(self.subject, self.runs, path=settings.dataset_path, verbose=False)
         self.raw = concatenate_raws([read_raw_edf(f, preload=True) for f in raw_fnames])
-        eegbci.standardize(self.raw)  # set channel names
-        self.raw.annotations.rename(dict(T1="hands", T2="feet"))  # as documented on PhysioNet
+        self.raw.annotations.rename(self.mapping)  # as documented on PhysioNet
         self.raw.set_eeg_reference(projection=True)
 
         # Set montage
+        eegbci.standardize(self.raw)  # set channel names
         montage = make_standard_montage("standard_1005")
-        self.raw.set_montage(montage)
+        self.raw.set_montage(montage, on_missing="ignore")
 
-        if settings.show_montage:
+        if self.settings.show_montage:
             self.raw.plot_sensors(show_names=True, sphere="eeglab")
             print(montage)
 
         # Filtering
         self.raw.notch_filter(60, fir_design='firwin', skip_by_annotation='edge')
-        self.raw_filtered = self.raw.copy().filter(7.0, 30.0, fir_design="firwin", skip_by_annotation="edge")
+        self.raw_filtered = self.raw.copy().filter(8.0, 40.0, fir_design="firwin", skip_by_annotation="edge")
 
-    def _plot_results(self, w_times, mean_scores, csp, epochs, stats):
-        """
-        Combine all visualizations into a single final figure.
-        Adds textual statistics to the right of the temporal plot.
-        """
-        fig = plt.figure(figsize=(12, 8), constrained_layout=True)
-        # Grid: 3 rows, 4 columns
-        gs = GridSpec(3, 4, figure=fig, height_ratios=[1, 1, 1])
-
-        # 1. Raw Signals
-        times = self.raw.times
-        data_raw = self.raw.get_data(picks="eeg", units="uV")
-        ax1 = fig.add_subplot(gs[0, :2])
-        ax1.plot(times, data_raw.T, color='k', linewidth=0.2, alpha=0.5)
-        ax1.set_title("Raw Data")
-        ax1.set_xlabel("Time (s)")
-        ax1.set_ylabel("Amplitude (µV)")
-
-        # 2. Filtered Signals
-        data_filtered = self.raw_filtered.get_data(picks="eeg", units="uV")
-        ax2 = fig.add_subplot(gs[0, 2:])
-        ax2.plot(times, data_filtered.T, color='k', linewidth=0.2, alpha=0.5)
-        ax2.set_title("Filtered Data (7-30 Hz)")
-        ax2.set_xlabel("Time (s)")
-
-        # 3. Temporal Classification Score
-        ax3 = fig.add_subplot(gs[1, :3])
-        ax3.plot(w_times, mean_scores, label="Mean Score", color='#1f77b4', linewidth=1.5)
-        ax3.axvline(0, linestyle="--", color="k", label="Onset")
-        ax3.axhline(0.5, linestyle="-", color="r", label="Chance (50%)")
-        ax3.set_xlabel("Time (s)")
-        ax3.set_ylabel("Accuracy")
-        ax3.set_title("Performance Over Time", fontweight='bold')
-        ax3.legend(loc="lower right", framealpha=0.9)
-        ax3.grid(True, linestyle=':', alpha=0.6)
-
-        # 4. Textual Statistics
-        ax_text = fig.add_subplot(gs[1, 3])
-        ax_text.axis("off")
-
-        stats_content = (
-            f"Mean (CV)     : {stats['mean']:.1%}\n"
-            f"Std Dev       : ±{stats['std']:.1%}\n"
-            f"Chance Level  : {stats['balance']:.1%}\n"
-            f"Max Score     : {stats['max']:.1%}"
-        )
-        text_str = f"RESULTS\n{'─' * 18}\n{stats_content}"
-
-        # Style box to prettify the text
-        props = dict(boxstyle='round,pad=1', facecolor='#f0f0f0', edgecolor='#bdbdbd', alpha=0.9)
-        ax_text.text(0.05, 0.5, text_str, transform=ax_text.transAxes,
-                     va='center', ha='left', fontsize=10, family='monospace',
-                     bbox=props, linespacing=1.6)
-
-        # 5. CSP Patterns (Top 4 components) - full bottom row
-        for i in range(min(4, len(csp.patterns_))):
-            ax_pattern = fig.add_subplot(gs[2, i])
-            plot_topomap(csp.patterns_[i], epochs.info, axes=ax_pattern, show=False)
-            ax_pattern.set_title(f"CSP Pattern {i+1}")
-
-        plt.suptitle(f"EEG Analysis Summary - Subject(s): {self.subject}", fontsize=12)
-        plt.show()
 
     def run(self):
         """
         Main function to run the EEG classification pipeline.
         """
         # Avoid classification of evoked responses by using epochs that start 1s after cue onset.
-        tmin, tmax = -1.0, 4.0
-
-        # Drop bad channels - channels prone to artifacts
-        bad_channels_to_drop = [
-            'Fp1', 'Fp2',  # Frontal pole - eye movement artifacts
-            # 'F7', 'F8',    # Lateral frontal - eye and muscle artifacts
-            # 'T7', 'T8',    # Temporal - muscle artifacts (jaw clenching)
-            # 'AF7', 'AF8'   # Anterior frontal - eye artifacts
-        ]
-
-        # Only drop channels that exist in the data
-        channels_to_drop = [ch for ch in bad_channels_to_drop if ch in self.raw.ch_names]
-        if channels_to_drop:
-            self.raw.drop_channels(channels_to_drop)
-            print(f"Dropped bad channels: {channels_to_drop}")
-
+        tmin, tmax = 0.5, 4.0
 
         # #############################################################################
         # Read epochs
         picks = pick_types(self.raw_filtered.info, meg=False, eeg=True, stim=False, eog=False, exclude="bads")
 
-        # Read epochs (train will be done only between 1 and 2s)
-        # Testing will be done with a running classifier
+        # Read epochs based on annotations (events) in the raw data.
         epochs = Epochs(
             self.raw_filtered,
-            event_id=["hands", "feet"],
+            event_id=self.event_id,
             tmin=tmin,
             tmax=tmax,
             proj=True,
@@ -166,9 +98,7 @@ class EEGClassifier:
             baseline=None,
             preload=True,
         )
-        # epochs.plot_drop_log()
-
-        epochs_train = epochs.copy().crop(tmin=0.5, tmax=2.5)
+        epochs_train = epochs.copy().crop(tmin=0.5, tmax=3.5)
         labels = epochs.events[:, -1] - 2
 
         # #############################################################################
@@ -182,7 +112,7 @@ class EEGClassifier:
 
         # Assemble a classifier
         lda = LinearDiscriminantAnalysis()
-        csp = CSP(n_components=8, reg='ledoit_wolf', log=True, norm_trace=False)
+        csp = CSP(n_components=4, reg='ledoit_wolf', log=True, norm_trace=False)
 
         # Use scikit-learn Pipeline with cross_val_score function
         clf = Pipeline([("CSP", csp), ("LDA", lda)], memory=None)
@@ -228,32 +158,79 @@ class EEGClassifier:
         mean_scores_time = np.mean(scores_windows, 0)
         max_score_time = np.max(mean_scores_time)
 
-        # Build stats dict for plotting
-        stats = {
+        result = {
             "mean": mean_score,
             "std": std_score,
             "balance": class_balance,
             "max": max_score_time
         }
 
-        if not self.show_plots:
-            print("\n" + "=" * 60)
-            print(f"{'CLASSIFICATION RESULTS SUMMARY':^60}")
-            print("=" * 60)
-            print(f"{'Average Accuracy (Cross-Val)':<30} : {mean_score:.2%} (+/- {std_score:.2%})")
-            print(f"{'Chance Level':<30} : {class_balance:.2%}")
-            print("-" * 60)
-            print("Temporal Analysis:")
-            print(f"{'  Max Score Achieved':<30} : {max_score_time:.2%}")
-            print(f"{'  Std Dev over time':<30} : {np.std(mean_scores_time):.4f}")
-            print("-" * 60)
+        if self.settings.plot:
+            self._plot_results(w_times, mean_scores_time, csp, epochs, result)
 
-            # # Configure numpy display for the scores array (more compact)
-            # with np.printoptions(formatter={'float': lambda x: f"{x: 0.2f}"}, linewidth=60):
-            #     print("Score profile (sliding window):")
-            #     print(mean_scores_time)
-            # print("=" * 60 + "\n")
-        else:
-            self._plot_results(w_times, mean_scores_time, csp, epochs, stats)
+        return result
 
-        return mean_score
+    def _plot_results(self, w_times, mean_scores, csp, epochs, stats):
+        """
+        Combine all visualizations into a single final figure.
+        Adds textual statistics to the right of the temporal plot.
+        """
+        x_label = "Time (s)"
+
+        fig = plt.figure(figsize=(12, 8), constrained_layout=True)
+        # Grid: 3 rows, 4 columns
+        gs = GridSpec(3, 4, figure=fig, height_ratios=[1, 1, 1])
+
+        # 1. Raw Signals
+        times = self.raw.times
+        data_raw = self.raw.get_data(picks="eeg", units="uV")
+        ax1 = fig.add_subplot(gs[0, :2])
+        ax1.plot(times, data_raw.T, color='k', linewidth=0.2, alpha=0.5)
+        ax1.set_title("Raw Data")
+        ax1.set_xlabel(x_label)
+        ax1.set_ylabel("Amplitude (µV)")
+
+        # 2. Filtered Signals
+        data_filtered = self.raw_filtered.get_data(picks="eeg", units="uV")
+        ax2 = fig.add_subplot(gs[0, 2:])
+        ax2.plot(times, data_filtered.T, color='k', linewidth=0.2, alpha=0.5)
+        ax2.set_title("Filtered Data (7-30 Hz)")
+        ax2.set_xlabel(x_label)
+
+        # 3. Temporal Classification Score
+        ax3 = fig.add_subplot(gs[1, :3])
+        ax3.plot(w_times, mean_scores, label="Mean Score", color='#1f77b4', linewidth=1.5)
+        ax3.axvline(0, linestyle="--", color="k", label="Onset")
+        ax3.axhline(0.5, linestyle="-", color="r", label="Chance (50%)")
+        ax3.set_xlabel(x_label)
+        ax3.set_ylabel("Accuracy")
+        ax3.set_title("Performance Over Time", fontweight='bold')
+        ax3.legend(loc="lower right", framealpha=0.9)
+        ax3.grid(True, linestyle=':', alpha=0.6)
+
+        # 4. Textual Statistics
+        ax_text = fig.add_subplot(gs[1, 3])
+        ax_text.axis("off")
+
+        stats_content = (
+            f"Mean (CV)     : {stats['mean']:.1%}\n"
+            f"Std Dev       : ±{stats['std']:.1%}\n"
+            f"Chance Level  : {stats['balance']:.1%}\n"
+            f"Max Score     : {stats['max']:.1%}"
+        )
+        text_str = f"RESULTS\n{'─' * 18}\n{stats_content}"
+
+        # Style box to prettify the text
+        props = dict(boxstyle='round,pad=1', facecolor='#f0f0f0', edgecolor='#bdbdbd', alpha=0.9)
+        ax_text.text(0.05, 0.5, text_str, transform=ax_text.transAxes,
+                     va='center', ha='left', fontsize=10, family='monospace',
+                     bbox=props, linespacing=1.6)
+
+        # 5. CSP Patterns (Top 4 components) - full bottom row
+        for i in range(min(4, len(csp.patterns_))):
+            ax_pattern = fig.add_subplot(gs[2, i])
+            plot_topomap(csp.patterns_[i], epochs.info, axes=ax_pattern, show=False)
+            ax_pattern.set_title(f"CSP Pattern {i+1}")
+
+        plt.suptitle(f"EEG Analysis Summary - Subject(s): {self.subject}", fontsize=12)
+        plt.show()

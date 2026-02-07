@@ -2,10 +2,8 @@ import argparse
 
 
 class Settings:
-    def __init__(self, argument: argparse.Namespace):
-        self.download = argument.download
+    def __init__(self, argument: argparse.Namespace, dataset_path: str = ""):
+        self.dataset_path = dataset_path
         self.show_montage = argument.montage
-        self.subject = argument.subject
-        self.task = argument.task
-        self.no_plot = argument.no_plot
-        self.dataset_path = ""
+        self.plot = argument.plot
+        self.verbose = argument.verbose
