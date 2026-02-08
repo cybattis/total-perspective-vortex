@@ -1,16 +1,26 @@
 import argparse
 import sys
+import os
+
+# Set environment variables to limit the number of threads used by libraries to 1 to avoid issues with multiprocessing
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+
+import concurrent.futures
 from pathlib import Path
-import mne
 from mne.datasets.eegbci import eegbci
-from sklearn.metrics import accuracy_score
 
 # Ajouter le dossier src au PYTHONPATH
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
 from eeg import EEGClassifier
 from settings import Settings
+from train import train
 
 dataset_path = "./datasets"
+
 
 def download_dataset() -> None:
     print("Téléchargement du dataset EEG Motor Movement/Imagery complet...")
@@ -22,12 +32,19 @@ def download_dataset() -> None:
 
     print(f"Dataset téléchargé dans : {dataset_path}")
 
-def print_verbose_results(_subject: int, _task: int, accuracy, score) -> None:
-    print(f"S{_subject:03d} T{_task} | Accuracy: {accuracy:.2%} (score: {score.mean():.2} ~{score.std():.2})")
+
+def print_verbose_results(_subject: int, _task: int, _accuracy, _score) -> None:
+    print(f"S{_subject:03d} T{_task} | Accuracy: {_accuracy:.2%} (score: {_score.mean():.2} ~{_score.std():.2})")
+
+
+def process_task(subject, task, _settings) -> tuple:
+    egg = EEGClassifier(subject, task, _settings)
+    epochs_train, epochs_data, labels = egg.run()
+    _model, _accuracy, _score = train(epochs_train, epochs_data, labels)
+    return subject, task, _model, _accuracy, _score
+
 
 if __name__ == "__main__":
-    mne.set_log_level("CRITICAL")
-
     parser = argparse.ArgumentParser(description="Process EDF and event files for a given subject and task.")
 
     parser.add_argument("-A", "--all", action="store_true", help="Run all tasks for all subjects")
@@ -38,6 +55,7 @@ if __name__ == "__main__":
     parser.add_argument("-t", "--task", type=int, nargs='+', default=[1], choices=range(1, 5), help="Task ID(s) (e.g., 1 2)")
     parser.add_argument("-T", "--all-task", action="store_true", help="Run all tasks")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose result output for each subject and task")
+    parser.add_argument("-j", "--jobs", type=int, default=1, help="Number of parallel jobs to run (default: number of CPUs)")
 
     args = parser.parse_args()
     settings = Settings(args, dataset_path)
@@ -50,21 +68,36 @@ if __name__ == "__main__":
     tasks = args.task
 
     if args.all:
-        subjects = range(1, 10)
+        print("Running all tasks for all subjects...")
+        subjects = range(1, 110)
         tasks = range(1, 5)
     elif args.all_task:
+        print(f"Running all tasks for subject(s) {', '.join(str(s) for s in subjects)}...")
         tasks = range(1, 5)
 
     tasks_result = [[], [], [], []]  # Initialize lists for each task
-    for subject in subjects:
-        for task in tasks:
-            egg = EEGClassifier(subject, task, settings)
-            accuracy, score = egg.run()
 
-            if args.verbose:
-                print_verbose_results(subject, task, accuracy, score)
+    with concurrent.futures.ProcessPoolExecutor(max_workers=args.jobs) as executor:
+        # List of tasks to be executed
+        futures = [
+            executor.submit(process_task, subject, task, settings)
+            for subject in subjects
+            for task in tasks
+        ]
 
-            tasks_result[task - 1].append(accuracy)
+        # Collect results as they complete
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                subject, task, model, accuracy, score = future.result()
+
+                if args.verbose:
+                    print_verbose_results(subject, task, accuracy, score)
+                else:
+                    print(f"S{subject:03d} T{task} | Accuracy: {accuracy:.2%}")
+
+                tasks_result[task - 1].append(accuracy)
+            except Exception as e:
+                print(f"Une erreur est survenue lors du traitement: {e}")
 
     print("\nTask averages:")
     mean_acc = [sum(r) / len(r) for r in tasks_result]
